@@ -13,10 +13,18 @@ logger = logging.getLogger(__name__)
 
 DATA_FILE = "referrals.json"
 USERNAMES_FILE = "usernames.json"
+BADGES_FILE = "badges.json"
+
 PREMII = {
-    5: "🎉 Badge Bronz + voucher 20 RON",
-    15: "🥈 Badge Argint + voucher 50 RON",
-    50: "🥇 Badge Aur + premiu special"
+    25: "🥉 Badge Bronz + voucher 20 RON",
+    50: "🥈 Badge Argint + voucher 50 RON",
+    100: "🥇 Badge Aur + premiu special"
+}
+
+BADGE_THRESHOLDS = {
+    25: "🥉 Badge Bronz",
+    50: "🥈 Badge Argint",
+    100: "🥇 Badge Aur"
 }
 
 def load_data(filename):
@@ -32,6 +40,22 @@ def save_data(filename, data):
 # Date persistente
 referrals = load_data(DATA_FILE)          # {referrer_id: [invited_user_ids]}
 usernames = load_data(USERNAMES_FILE)    # {user_id: username_or_nickname}
+badges = load_data(BADGES_FILE)           # {user_id: [badge_names]}
+
+async def check_and_award_badges(update: Update, user_id: str, invited_count: int):
+    user_badges = set(badges.get(user_id, []))
+    new_badges = []
+
+    for threshold, badge_name in BADGE_THRESHOLDS.items():
+        if invited_count >= threshold and badge_name not in user_badges:
+            user_badges.add(badge_name)
+            new_badges.append(badge_name)
+
+    if new_badges:
+        badges[user_id] = list(user_badges)
+        save_data(BADGES_FILE, badges)
+        msg = "🏅 Felicitări! Ai primit următoarele badge-uri noi:\n" + "\n".join(new_badges)
+        await update.message.reply_text(msg)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -52,6 +76,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"User {user_id} added as referral for {referrer_id}")
 
     unique_link = f"https://t.me/{bot_username}?start={user_id}"
+
+    invited_count = len(referrals.get(user_id, []))
+    await check_and_award_badges(update, user_id, invited_count)
+
     await update.message.reply_text(
         f"👋 Salut, {usernames[user_id]}!\n"
         f"Linkul tău unic pentru giveaway:\n{unique_link}\n"
@@ -103,10 +131,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/premii - Vezi premiile disponibile\n"
         "/setusername - Setează-ți un nickname pentru leaderboard\n"
         "/profile - Vezi profilul tău\n"
+        "/giveaway187 - Vezi badge-urile și progresul tău\n"
         "/help - Această listă de comenzi"
     )
 
-# Funcția /leaderboard
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not referrals:
         await update.message.reply_text("🏆 Nu există date despre invitați încă.")
@@ -129,14 +157,12 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"{i}. {name} - {count} invitați | {progress}\n"
     await update.message.reply_text(message)
 
-# Funcția /premii
 async def premii(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "🎁 Premiile disponibile:\n"
     for nr_inv, descriere in sorted(PREMII.items()):
         msg += f"- {nr_inv} invitați: {descriere}\n"
     await update.message.reply_text(msg)
 
-# Funcția /setusername <nickname>
 async def setusername(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     args = context.args
@@ -148,7 +174,6 @@ async def setusername(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data(USERNAMES_FILE, usernames)
     await update.message.reply_text(f"✅ Nickname-ul tău a fost setat la: {nickname}")
 
-# Funcția /profile
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     name = usernames.get(user_id, update.effective_user.full_name)
@@ -165,7 +190,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Premii câștigate:\n{premii_text}"
     )
 
-# Placeholder-uri pentru funcții avansate ce urmează implementare
+# Placeholder-uri funcții avansate (urmează implementare)
 async def invita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("↗️ Funcția /invita urmează să fie implementată.")
 
@@ -205,9 +230,33 @@ async def share(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg)
 
-# Moderare automată placeholder
 async def moderare(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Funcția de moderare automată este în lucru.")
+
+# Funcția /giveaway187 (gamification cu badge-uri)
+async def giveaway187(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    invited_count = len(referrals.get(user_id, []))
+    user_badges = badges.get(user_id, [])
+
+    await check_and_award_badges(update, user_id, invited_count)
+
+    next_badge_threshold = None
+    for threshold in sorted(BADGE_THRESHOLDS.keys()):
+        if invited_count < threshold:
+            next_badge_threshold = threshold
+            break
+
+    progress_msg = f"Invitați actuali: {invited_count}\n"
+    if next_badge_threshold:
+        progress_msg += f"Mai ai nevoie de {next_badge_threshold - invited_count} invitați pentru {BADGE_THRESHOLDS[next_badge_threshold]}\n"
+    else:
+        progress_msg += "Ai atins toate badge-urile disponibile! 🏆\n"
+
+    badges_msg = "Badge-uri câștigate:\n" + ("\n".join(user_badges) if user_badges else "Niciun badge câștigat încă.")
+
+    await update.message.reply_text(progress_msg + "\n" + badges_msg)
+
 
 def main():
     TOKEN = os.getenv("BOT_TOKEN")
@@ -237,6 +286,9 @@ def main():
     app.add_handler(CommandHandler("stats_global", stats_global))
     app.add_handler(CommandHandler("share", share))
     app.add_handler(CommandHandler("moderare", moderare))
+
+    # Handler nou pentru gamification sub comanda giveaway187
+    app.add_handler(CommandHandler("giveaway187", giveaway187))
 
     print("Botul pornește...") 
     app.run_polling()
